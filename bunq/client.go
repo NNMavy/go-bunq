@@ -17,8 +17,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/OGKevin/go-bunq/model"
+	"github.com/google/uuid"
+
 	"github.com/pkg/errors"
-	uuid "github.com/satori/go.uuid"
 )
 
 const (
@@ -33,6 +35,13 @@ const (
 	BaseURLSandbox string = "https://public-api.sandbox.bunq.com/v1/"
 	// BaseURLProduction The base URL for the prod api
 	BaseURLProduction string = "https://api.bunq.com/v1/"
+)
+
+var (
+	// WildcardIP is used to allow all ip addresses to connect to the bunq api. Use this with caution.
+	WildcardIP = []string{"*"}
+	// CurrentIP is used to allow only the current ip address to connect to the bunq api.
+	CurrentIP []string
 )
 
 // DetermineBaseURL returns the proper base url.
@@ -62,21 +71,26 @@ type Client struct {
 	*http.Client
 	ctx context.Context
 
-	baseURL     string
-	apiKey      string
-	Debug       bool
-	description string
+	baseURL        string
+	apiKey         string
+	Debug          bool
+	DisableBackoff bool
+	description    string
+	permittedIps   []string
 
 	Err error
 
 	requestQueue             chan queueEntry
 	requestRateLimitMapMutex sync.RWMutex
 	requestRateLimitMap      map[string]time.Time
+	rateLimitPolicy          backoff
 
 	privateKey      *rsa.PrivateKey
 	serverPublicKey *rsa.PublicKey
 
-	userType
+	isUserPerson  bool
+	isUserCompany bool
+	isUserAPIkey  bool
 
 	// initOnce makes sure that init is called only once per instance. This will help that no new
 	// new device keeps being registered etc.
@@ -85,8 +99,8 @@ type Client struct {
 	tokenMutex sync.RWMutex
 	// token is the token that needs to be in the auth header.
 	token                *string
-	installationContext  *installation
-	sessionServerContext *sessionServer
+	installationContext  *model.Installation
+	sessionServerContext *model.SessionServer
 
 	common                  service
 	installation            *installationService
@@ -99,10 +113,11 @@ type Client struct {
 	CardService             *cardService
 	ContentService          *contentService
 	RequestResponseService  *requestResponseService
+	NotificationService     *notificationService
 }
 
 // NewClientFromContext create a new bunq client from a saved client context.
-func NewClientFromContext(ctx context.Context, clientCtx *ClientContext) (*Client, error) {
+func NewClientFromContext(ctx context.Context, clientCtx *model.ClientContext) (*Client, error) {
 	privateKey, err := x509.ParsePKCS1PrivateKey(clientCtx.PrivateKey)
 	if err != nil {
 		return nil, errors.Wrap(err, "bunq: could not parse private key")
@@ -116,7 +131,7 @@ func NewClientFromContext(ctx context.Context, clientCtx *ClientContext) (*Clien
 
 	serverPubKey := parseResult.(*rsa.PublicKey)
 
-	c := NewClient(ctx, clientCtx.BaseURL, privateKey, clientCtx.APIKey, "")
+	c := NewClient(ctx, clientCtx.BaseURL, privateKey, clientCtx.APIKey, "", []string{})
 	c.apiKey = clientCtx.APIKey
 	c.baseURL = clientCtx.BaseURL
 
@@ -132,12 +147,13 @@ func NewClientFromContext(ctx context.Context, clientCtx *ClientContext) (*Clien
 }
 
 // NewClient create a new bunq client to use.
-func NewClient(ctx context.Context, url string, key *rsa.PrivateKey, apikey, description string) *Client {
+func NewClient(ctx context.Context, baseURL string, key *rsa.PrivateKey, apikey, description string, permittedIps []string) *Client {
 	c := Client{}
 	c.ctx = ctx
 	c.Client = http.DefaultClient
-	c.baseURL = url
+	c.baseURL = baseURL
 	c.description = description
+	c.permittedIps = permittedIps
 
 	c.apiKey = apikey
 	c.privateKey = key
@@ -162,6 +178,7 @@ func NewEmptyClient(ctx context.Context) *Client {
 func (c *Client) registerServices() {
 	c.requestQueue = make(chan queueEntry, 9)
 	c.requestRateLimitMap = make(map[string]time.Time)
+	c.rateLimitPolicy = NewDefaultBackoff()
 
 	c.common.client = c
 
@@ -175,6 +192,7 @@ func (c *Client) registerServices() {
 	c.CardService = (*cardService)(&c.common)
 	c.ContentService = (*contentService)(&c.common)
 	c.RequestResponseService = (*requestResponseService)(&c.common)
+	c.NotificationService = (*notificationService)(&c.common)
 
 	c.spawnRequestHandlerWorker()
 }
@@ -223,6 +241,34 @@ func (c *Client) spawnRequestHandlerWorker() {
 				}
 
 				res, err := c.Do(entry.req)
+
+				// if the request failed due to rate limiting, we will retry it with a backoff policy
+				if res.StatusCode == http.StatusTooManyRequests && !c.DisableBackoff {
+					for {
+						nextLimit := c.rateLimitPolicy.NextLimit()
+
+						if nextLimit == Stop {
+							if c.Debug {
+								fmt.Printf("bunq: request failed due to rate limit exceeded after %d retries, will not retry anymore\n", c.rateLimitPolicy.Try())
+							}
+							err = errors.Wrapf(err, "bunq: request failed due to rate limit exceeded after %d retries, will not retry anymore", c.rateLimitPolicy.Try())
+							break
+						}
+
+						if c.Debug {
+							log.Printf("bunq: request failed due to rate limited exceeded, will retry in %f seconds\n", nextLimit.Seconds())
+						}
+						time.Sleep(nextLimit)
+
+						res, err = c.Do(entry.req)
+						if res.StatusCode != http.StatusTooManyRequests {
+							if c.Debug {
+								fmt.Printf("bunq: request succeeded after %d retries\n", c.rateLimitPolicy.Try())
+							}
+							break
+						}
+					}
+				}
 
 				if err != nil && c.Debug {
 					log.Print(err)
@@ -280,22 +326,33 @@ func (c *Client) do(r *http.Request) (*http.Response, error) {
 
 	if res.StatusCode != http.StatusOK {
 		if res.StatusCode == http.StatusInternalServerError {
-			return nil, errors.New(fmt.Sprintf("bunq: http request failed with status %d", res.StatusCode))
+			return nil, ErrInternalServerError
+		}
+		if res.StatusCode == http.StatusTooManyRequests {
+			return nil, ErrRateLimitExceeded
 		}
 
 		errResponse := createErrorResponse(res)
 
-		return nil, fmt.Errorf(
-			"bunq: http request failed with status %d and description %q and response header: %q",
-			res.StatusCode,
-			errResponse.Error[0].ErrorDescription,
-			res.Header.Get("X-Bunq-Client-Response-Id"),
-		)
+		if len(errResponse.Error) == 0 {
+			return nil, fmt.Errorf(
+				"bunq: http request failed with status %d and response header: %q",
+				res.StatusCode,
+				res.Header.Get("X-Bunq-Client-Response-Id"),
+			)
+		} else {
+			return nil, fmt.Errorf(
+				"bunq: http request failed with status %d and description %q and response header: %q",
+				res.StatusCode,
+				errResponse.Error[0].ErrorDescription,
+				res.Header.Get("X-Bunq-Client-Response-Id"),
+			)
+		}
 	}
 
 	err = c.verifyResponse(r, res)
 	if err != nil {
-		return nil, errors.Wrap(err, "bunq: request was successful but repose verification failed")
+		return nil, ErrResponseVerificationFailed
 	}
 
 	return res, err
@@ -327,7 +384,7 @@ func shouldSignOrVerify(url string) bool {
 
 func (*Client) setAllDefaultHeader(r *http.Request) {
 	r.Header.Set(headerCacheControl, "no-cache")
-	r.Header.Set(headerUserAgent, fmt.Sprintf("OGKevin-go-bunq-%s", os.Getenv("v0.1.2")))
+	r.Header.Set(headerUserAgent, "go-bunq")
 	r.Header.Set(headerXBunqLan, "en_US")
 	r.Header.Set(headerXBunqRegion, "nl_NL")
 	r.Header.Set(headerXBunqGeoLocation, "0 0 0 0 NL")
@@ -335,11 +392,18 @@ func (*Client) setAllDefaultHeader(r *http.Request) {
 }
 
 func (c *Client) verifyResponse(r *http.Request, res *http.Response) error {
+	// Hacky way to bypass validation for sandbox as its broken
+	env := os.Getenv("BUNQ_SANDBOX")
+
+	if env == "true" {
+		return nil
+	}
+
 	if shouldSignOrVerify(r.URL.Path) {
 		verified, err := c.verifySignature(res)
 
 		if !verified {
-			return errors.Wrap(err, "cloud not validate that request came from bunq")
+			return errors.Wrap(err, "could not validate that request came from bunq")
 		}
 	}
 
@@ -350,37 +414,35 @@ func (c *Client) formatRequestURL(path string) string {
 	return c.baseURL + path
 }
 
-func createErrorResponse(r *http.Response) responseError {
+func createErrorResponse(r *http.Response) model.ResponseError {
 	defer r.Body.Close()
 	resBody, _ := ioutil.ReadAll(r.Body)
 
-	var errorResponse responseError
+	var errorResponse model.ResponseError
 	_ = json.Unmarshal(resBody, &errorResponse)
 
 	return errorResponse
 }
 
 func generateRequestID() string {
-	uid := uuid.NewV4()
-
-	return uid.String()
+	return uuid.New().String()
 }
 
 // ExportClientContext exports the client context of the current client.
-func (c *Client) ExportClientContext() (ClientContext, error) {
+func (c *Client) ExportClientContext() (model.ClientContext, error) {
 	p := x509.MarshalPKCS1PrivateKey(c.privateKey)
 	userID, err := c.GetUserID()
 	if err != nil {
-		return ClientContext{}, err
+		return model.ClientContext{}, err
 	}
 
-	ctx := ClientContext{
+	ctx := model.ClientContext{
 		PrivateKey:           p,
 		InstallationContext:  c.installationContext,
 		SessionServerContext: c.sessionServerContext,
 		APIKey:               c.apiKey,
 		BaseURL:              c.baseURL,
-		UserID:               uint(userID),
+		UserID:               userID,
 	}
 
 	return ctx, nil
@@ -522,6 +584,9 @@ func (c *Client) getSessionExpInSec() (int64, error) {
 	if c.IsUserPerson() {
 		return c.sessionServerContext.UserPerson.SessionTimeout, nil
 	} else if c.IsUserCompany() {
+		if c.sessionServerContext.UserCompany.SessionTimeout == 0 {
+			return 60, nil
+		}
 		return c.sessionServerContext.UserCompany.SessionTimeout, nil
 	}
 
@@ -548,10 +613,22 @@ func (c *Client) GetUserID() (int, error) {
 	return 0, fmt.Errorf("bunq: could not determine user id")
 }
 
-func (c *Client) preformRequest(method, url string, body io.Reader) (*http.Response, error) {
+func (c *Client) preformRequest(method, url string, body io.Reader, params ...model.QueryParam) (*http.Response, error) {
 	r, err := http.NewRequest(method, url, body)
 	if err != nil {
 		return nil, errors.Wrap(err, fmt.Sprintf("bunq: could not create request for  %s", url))
+	}
+
+	if len(params) > 0 {
+		query := r.URL.Query()
+		for _, p := range params {
+			if p != nil {
+				if err := p(query); err != nil {
+					return nil, errors.Wrap(err, "bunq: could not apply pagination option")
+				}
+			}
+		}
+		r.URL.RawQuery = query.Encode()
 	}
 
 	res, err := c.do(r)
@@ -573,13 +650,13 @@ func (c *Client) parseResponse(res *http.Response, obj interface{}) error {
 	return nil
 }
 
-func (c *Client) doCURequest(url string, bodyRaw []byte, httpMethod string) (*responseBunqID, error) {
+func (c *Client) doCURequest(url string, bodyRaw []byte, httpMethod string) (*model.ResponseBunqID, error) {
 	res, err := c.preformRequest(httpMethod, url, bytes.NewBuffer(bodyRaw))
 	if err != nil {
 		return nil, err
 	}
 
-	var resBunqID responseBunqID
+	var resBunqID model.ResponseBunqID
 
 	return &resBunqID, c.parseResponse(res, &resBunqID)
 }

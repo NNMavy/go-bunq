@@ -1,28 +1,28 @@
-package bunq
+package model
 
-type responseInstallation struct {
-	Response []installation
+type ResponseInstallation struct {
+	Response []Installation
 }
 
-type responseError struct {
+type ResponseError struct {
 	Error []bunqError `json:"Error"`
 }
 
-type responseDeviceServer struct {
+type ResponseDeviceServer struct {
 	Response []wrappedBunqID
 }
 
-type responseSessionServer struct {
-	Response []sessionServer
+type ResponseSessionServer struct {
+	Response []SessionServer
 }
 
-type responseUserPerson struct {
+type ResponseUserPerson struct {
 	Response []struct {
 		UserPerson userPerson
 	}
 }
 
-type responseBunqID struct {
+type ResponseBunqID struct {
 	Response []wrappedBunqID
 }
 
@@ -42,7 +42,15 @@ type ResponseMonetaryAccountSavingGet struct {
 	Pagination Pagination `json:"Pagination"`
 }
 
-type responseDraftPaymentGet struct {
+// ResponseMonetaryAccountJointGet The monetary account joint response object.
+type ResponseMonetaryAccountJointGet struct {
+	Response []struct {
+		MonetaryAccountJoint MonetaryAccountJoint `json:"MonetaryAccountJoint"`
+	} `json:"Response"`
+	Pagination Pagination `json:"Pagination"`
+}
+
+type ResponseDraftPaymentGet struct {
 	Response []struct {
 		DraftPayment draftPayment `json:"DraftPayment"`
 	} `json:"Response"`
@@ -56,7 +64,7 @@ type ResponsePaymentGet struct {
 	Pagination Pagination `json:"Pagination"`
 }
 
-type responseMasterCardActionGet struct {
+type ResponseMasterCardActionGet struct {
 	Response []struct {
 		MasterCardAction masterCardAction `json:"MasterCardAction"`
 	} `json:"Response"`
@@ -79,6 +87,13 @@ type bunqError struct {
 type ResponseRequestResponsesGet struct {
 	Response []struct {
 		RequestResponse RequestResponse `json:"RequestResponse"`
+	} `json:"Response"`
+	Pagination Pagination `json:"Pagination"`
+}
+
+type ResponseNotificationFilterUrlGet struct {
+	Response []struct {
+		NotificationFilterURL NotificationFilterUrl `json:"NotificationFilterUrl"`
 	} `json:"Response"`
 	Pagination Pagination `json:"Pagination"`
 }

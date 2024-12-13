@@ -14,10 +14,13 @@ const (
 	endpointDraftPaymentCreate string = "user/%d/monetary-account/%d/draft-payment"
 	endpointDraftPaymentWithID string = "user/%d/monetary-account/%d/draft-payment/%d"
 
-	endpointPaymentGet       string = "user/%d/monetary-account/%d/payment?count=200"
+	endpointPaymentCreate string = "user/%d/monetary-account/%d/payment"
+
+	endpointPaymentGet       string = "user/%d/monetary-account/%d/payment"
 	endpointPaymentGetWithID string = "user/%d/monetary-account/%d/payment/%d"
 
-	endpointScheduledPaymentGet string = "user/%d/monetary-account/%d/schedule-payment?count=200"
+	endpointScheduledPaymentGet       string = "user/%d/monetary-account/%d/schedule-payment"
+	endpointScheduledPaymentGetWithID string = "user/%d/monetary-account/%d/schedule-payment/%d"
 
 	endpointMonetaryAccountBankListing string = "user/%d/monetary-account-bank"
 	endpointMonetaryAccountBankGet     string = "user/%d/monetary-account-bank/%d"
@@ -25,7 +28,14 @@ const (
 	endpointMonetaryAccountSavingsListing string = "user/%d/monetary-account-savings"
 	endpointMonetaryAccountSavingsGet     string = "user/%d/monetary-account-savings/%d"
 
-	endpointMasterCardActionGet string = "user/%d/monetary-account/%d/mastercard-action/%d"
+	endpointMonetaryAccountJointListing string = "user/%d/monetary-account-joint"
+	endpointMonetaryAccountJointGet     string = "user/%d/monetary-account-joint/%d"
 
-	endpointRequestResponsesGet string = "user/%d/monetary-account/%d/request-response"
+	endpointMasterCardActionGet       string = "user/%d/monetary-account/%d/mastercard-action"
+	endpointMasterCardActionGetWithID string = "user/%d/monetary-account/%d/mastercard-action/%d"
+
+	endpointRequestResponsesGet       string = "user/%d/monetary-account/%d/request-response"
+	endpointRequestResponsesGetWithID string = "user/%d/monetary-account/%d/request-response/%d"
+
+	endpointUserNotificationFilterUrl string = "user/%d/notification-filter-url"
 )

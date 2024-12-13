@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/stretchr/testify/assert"
 	"os"
 	"testing"
+
+	"github.com/OGKevin/go-bunq/model"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestClientContextExportAndImport(t *testing.T) {
@@ -48,7 +50,7 @@ func TestSessionRenewal(t *testing.T) {
 	defer cancel()
 	defer fakeServer.Close()
 
-	var cContext ClientContext
+	var cContext model.ClientContext
 
 	file, err := os.Open("../testdata/bunq/client_context.json")
 	if err != nil {

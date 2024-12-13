@@ -3,6 +3,8 @@ package bunq
 import (
 	"testing"
 
+	"github.com/OGKevin/go-bunq/model"
+
 	"github.com/stretchr/testify/assert"
 )
 
@@ -30,8 +32,8 @@ func TestUpdateUserPerson(t *testing.T) {
 
 	assert.NoError(t, c.Init())
 
-	bod := requestUserPersonPut{
-		NotificationFilters: []notificationFilter{
+	bod := model.RequestUserPersonPut{
+		NotificationFilters: []model.NotificationFilter{
 			{
 				NotificationDeliveryMethod: "URL",
 				NotificationTarget:         "https://requestbin.fullcontact.com/pwgm46pw",

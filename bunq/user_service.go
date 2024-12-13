@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/OGKevin/go-bunq/model"
+
 	"github.com/pkg/errors"
 )
 
@@ -14,7 +16,7 @@ type userService service
 // GetUserPerson retrieves a signle user person. Because there can be 1 user person per api key.
 // the user id will be determined by the client.
 // https://doc.bunq.com/#/user-person/Read_UserPerson
-func (u *userService) GetUserPerson() (*responseUserPerson, error) {
+func (u *userService) GetUserPerson() (*model.ResponseUserPerson, error) {
 	userID, err := u.client.GetUserID()
 	if err != nil {
 		return nil, err
@@ -30,7 +32,7 @@ func (u *userService) GetUserPerson() (*responseUserPerson, error) {
 		return nil, errors.Wrap(err, "bunq: request to user-person failed")
 	}
 
-	var resUserPerson responseUserPerson
+	var resUserPerson model.ResponseUserPerson
 	defer res.Body.Close()
 
 	err = json.NewDecoder(res.Body).Decode(&resUserPerson)
@@ -43,7 +45,7 @@ func (u *userService) GetUserPerson() (*responseUserPerson, error) {
 
 // UpdateUserPerson updates the contents of the current auth user-person.
 // https://doc.bunq.com/#/user-person/Update_UserPerson
-func (u *userService) UpdateUserPerson(rBody requestUserPersonPut) (*responseBunqID, error) {
+func (u *userService) UpdateUserPerson(rBody model.RequestUserPersonPut) (*model.ResponseBunqID, error) {
 	userID, err := u.client.GetUserID()
 	if err != nil {
 		return nil, err
@@ -68,7 +70,7 @@ func (u *userService) UpdateUserPerson(rBody requestUserPersonPut) (*responseBun
 		return nil, errors.Wrap(err, "bunq: request to user-person failed")
 	}
 
-	var resBunqID responseBunqID
+	var resBunqID model.ResponseBunqID
 	defer res.Body.Close()
 
 	err = json.NewDecoder(res.Body).Decode(&resBunqID)

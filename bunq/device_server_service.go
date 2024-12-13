@@ -4,15 +4,17 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
+
+	"github.com/OGKevin/go-bunq/model"
 )
 
 type deviceServerService service
 
-func (d *deviceServerService) create() (*responseDeviceServer, error) {
-	bodyStruct := requestDeviceServer{
+func (d *deviceServerService) create() (*model.ResponseDeviceServer, error) {
+	bodyStruct := model.RequestDeviceServer{
 		Description:  d.client.description,
 		Secret:       d.client.apiKey,
-		PermittedIps: []string{},
+		PermittedIps: d.client.permittedIps,
 	}
 	bodyRaw, err := json.Marshal(bodyStruct)
 	if err != nil {
@@ -33,7 +35,7 @@ func (d *deviceServerService) create() (*responseDeviceServer, error) {
 		return nil, err
 	}
 
-	var resSessionServer responseDeviceServer
+	var resSessionServer model.ResponseDeviceServer
 	defer res.Body.Close()
 
 	err = json.NewDecoder(res.Body).Decode(&resSessionServer)
